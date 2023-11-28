@@ -23,19 +23,11 @@ heuristic(Pos, Task, H) :-
 sort_queue(Queue, SortedQueue) :-
     keysort(Queue, SortedQueue).
 
-sort_by_distance(Pos, Positions, SortedPositions) :-
-    maplist(distance_to_pos(Pos), Positions, Distances),
-    pairs_keys_values(Pairs, Distances, Positions),
-    keysort(Pairs, SortedPairs),
-    pairs_values(SortedPairs, SortedPositions).
-
-find_nearest_charging_station(Pos, NearestStation) :-
-    findall(Station, map_adjacent(Pos, Station, c(_)), Stations),
-    sort_by_distance(Pos, Stations, [NearestStation|_]).
-
+% Determine the Manhattan distance from current position to target
 distance_to_pos(Pos1,Pos2,Distance) :-
     map_distance(Pos1, Pos2, Distance).
 
+% check if there is enough energy to reach the destination
 enough_energy(CurrentPos, Task , Energy) :-
     achieved(Task, Goal),
     map_distance(CurrentPos, Goal, Distance),
@@ -51,9 +43,9 @@ search_a_star(Task, [G-CurrentPath|RestQueue], Visited, Path) :-
     (   achieved(Task, CurrentPos) -> reverse(CurrentPath, [_|Path])
     ;   findall(NewG-[NewNext|NewPath],
             (   
-                (
                     my_agent(A), get_agent_energy(A, Energy),
-                    enough_energy(CurrentPos, Task, Energy) ->  % Energy checking
+                (
+                    enough_energy(CurrentPos, Task, Energy) -> 
                     map_adjacent(CurrentPos, Next, empty),
                     \+ member(Next, Visited),
                     NewNext = Next,
@@ -62,27 +54,22 @@ search_a_star(Task, [G-CurrentPath|RestQueue], Visited, Path) :-
                 ;   
                     search_for_nearest_charging_station(find(c(_)), CurrentPos, NextStationPath),
                     last(NextStationPath, Next2),
-                    NewNext = Next2,
-                    NewPath = [Next2], 
+                    NewNext = Next2, 
                     heuristic(Next2, Task, H),
-                    my_agent(A), agent_do_moves(A, NextStationPath), agent_topup_energy(A, c(_)), get_agent_energy(A, Energy), % topup agent
+                    my_agent(A), agent_do_moves(A, NextStationPath), agent_topup_energy(A, c(_)), % topup agent
                     say("topup", A)
                 ),
                 G1 is G + 1,
-                NewG is G1 + H
+                NewG is G1 + H 
             ),
             NewPaths),
-        (   length(NewPaths, 1), NewPaths = [[_|[Next2]]] -> 
-            Queue = NewPaths, 
-            NewVisited = [] 
-        ;   append(RestQueue, NewPaths, Queue),
-            NewVisited = [CurrentPos|Visited] 
-        ),
+        append(RestQueue, NewPaths, Queue),
+        NewVisited = [CurrentPos|Visited],
         sort_queue(Queue, SortedQueue),
         search_a_star(Task, SortedQueue, NewVisited, Path)
     ).
 
-% BFS search
+% BFS search for unknown position
 search_bf(Task,Queue,Visited,Path) :-
     Queue = [Next|Rest],
     Next = [Pos|RPath],
