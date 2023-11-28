@@ -147,7 +147,7 @@ actor('John Turturro').
 actor('Julianne Moore').
 actor('Scarlett Johansson').
 actor('Steve Buscemi').
-actor('Tom Hanks').
+% actor('Tom Hanks').
 actor('William H. Macy').
 
 link('Barack Obama').

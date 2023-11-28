@@ -2,7 +2,6 @@
 solve_task(Task, Cost) :-
     my_agent(A), 
     get_agent_position(A, P),
-    get_agent_energy(A,Energy), % get initial energy (100) 
     (   achieved(Task, P) -> Path = [], Cost = 0
     ;   choose_search_method(Task, P, Path),
         agent_do_moves(A, Path),
@@ -63,6 +62,7 @@ search_a_star(Task, [G-CurrentPath|RestQueue], Visited, Path) :-
                 NewG is G1 + H 
             ),
             NewPaths),
+    
         append(RestQueue, NewPaths, Queue),
         NewVisited = [CurrentPos|Visited],
         sort_queue(Queue, SortedQueue),
