@@ -1,4 +1,4 @@
-% Accomplish a given Task and return the Cost
+% Task = go or find
 solve_task(Task, Cost) :-
     my_agent(A), 
     get_agent_position(A, P),
@@ -7,24 +7,23 @@ solve_task(Task, Cost) :-
         agent_do_moves(A, Path),
         length(Path, Cost)).
 
-% Two types of Tasks: 1-go 2-find
+% If the position is known, do A* search, else do BFS search
 choose_search_method(Task, StartPos, Path) :-
     (   Task = go(Pos), 
-        ground(Pos) -> search_a_star(Task, [0-[StartPos]], [], Path) % ground(Pos) -> if Pos is known do A* else do Bfs
-    ;   search_bf(Task, [[StartPos]], [], Path)).
+        write('A* search'),
+        ground(Pos) -> search_a_star(Task, [0-[StartPos]], [], Path)
+    ;   
+        write('BFS search'),
+        search_bf(Task, [[StartPos]], [], Path)).
 
-% Calculte the estimate cost h
+% cost = distance from current position to target
 heuristic(Pos, Task, H) :- 
     achieved(Task,Goal),
     map_distance(Pos, Goal, H).
 
-% sort by key-value, e.g., [1-[a,b,...],3-[b,h,...]]
+% keysort will sort by key, e.g., [1-[a,b,...],3-[b,h,...]] -> [1-[a,b,...],3-[b,h,...]]
 sort_queue(Queue, SortedQueue) :-
     keysort(Queue, SortedQueue).
-
-% Determine the Manhattan distance from current position to target
-distance_to_pos(Pos1,Pos2,Distance) :-
-    map_distance(Pos1, Pos2, Distance).
 
 % check if there is enough energy to reach the destination
 enough_energy(CurrentPos, Task , Energy) :-
@@ -33,10 +32,10 @@ enough_energy(CurrentPos, Task , Energy) :-
     Energy >= Distance.
 
 % BFS search for the nearest charging station
-search_for_nearest_charging_station(Task,StartPos, Path) :-
+nearest_charging_station(Task,StartPos, Path) :-
     search_bf(Task, [[StartPos]], [], Path).
 
-% A* search
+% A* search for the known target
 search_a_star(Task, [G-CurrentPath|RestQueue], Visited, Path) :-    
     CurrentPath = [CurrentPos|_],
     (   achieved(Task, CurrentPos) -> reverse(CurrentPath, [_|Path])
@@ -51,7 +50,7 @@ search_a_star(Task, [G-CurrentPath|RestQueue], Visited, Path) :-
                     heuristic(Next, Task, H),
                     NewPath = CurrentPath
                 ;   
-                    search_for_nearest_charging_station(find(c(_)), CurrentPos, NextStationPath),
+                    nearest_charging_station(find(c(_)), CurrentPos, NextStationPath),
                     last(NextStationPath, Next2),
                     NewNext = Next2, 
                     heuristic(Next2, Task, H),
@@ -62,7 +61,6 @@ search_a_star(Task, [G-CurrentPath|RestQueue], Visited, Path) :-
                 NewG is G1 + H 
             ),
             NewPaths),
-    
         append(RestQueue, NewPaths, Queue),
         NewVisited = [CurrentPos|Visited],
         sort_queue(Queue, SortedQueue),
