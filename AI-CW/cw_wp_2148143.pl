@@ -1,154 +1,170 @@
-% % True if link L appears on A's wikipedia page
-% actor_has_link(L,A) :- 
-%     actor(A), wp(A,WT), wt_link(WT,L).
+% True if link L appears on A's wikipedia page
+actor_has_link(L, A) :- 
+    actor(A), wp(A, WT), wt_link(WT, L).
 
-% % Attempt to solve by visiting each oracle in ID order
-% eliminate(As,A,K) :- 
-%     As=[A], !
-%     ;
-%     solve_task_multiple(find(o(K)),_), !,
-%     my_agent(N),
-%     agent_ask_oracle(N,o(K),link,L), 
-%     include(actor_has_link(L),As,ViableAs), 
-%     K1 is K+1, 
-%     eliminate(ViableAs,A,K1).
+% keep track of visited oracles
+:- dynamic visited/2.
 
-% % Deduce the identity of the secret actor A
-% find_identity(A) :- 
-%     findall(A,actor(A),As), eliminate(As,Result,1),
-%     (   length(Result,1), [A] = Result
-%     ;   A = unknown
-%     ).
+% Initialize the visited list
+initialize_visited(Agent) :-
+    retractall(visited(A, _)),
+    assert(visited(Agent, [])). 
 
-% safe_energy_threshold(50). % threshold 20
+% Update the visited list
+update_visited(Agent, Oracle) :-
+    visited(Agent, Visited),
+    retract(visited(A,_)),
+    assert(visited(Agent, [Oracle|Visited])).
 
-% % Accomplish a given Task and return the Cost
-% solve_task_multiple(Task, Cost) :-
-%     my_agent(A),
-%     get_agent_position(A, P),
-%     get_agent_energy(A, Energy),
-%     (   achieved(Task, P) -> Path = [], Cost = 0
-%     ;   find_path(Task, P, Energy, Path, A)
-%     ),
-%     length(Path, Cost).
+% Using BFS to find the nearest oracle
+eliminate(As, A, Agent) :- 
+    As = [A], ! 
+    ;
+    visited(Agent, VisitedList),
+    length(VisitedList, Length),
+    Length >= 10, !, 
+    (   As = [A] -> true
+    ;   A = unknown, true
+    )
+    ;
+    solve_task_multiple(o(K),_,Agent), !,
+    update_visited(Agent, o(K)),
+    agent_ask_oracle(Agent, o(K), link, L),
+    include(actor_has_link(L), As, ViableAs),
+    eliminate(ViableAs, A, Agent).
 
-% find_path(Task, StartPos, Energy, Path, A) :-
+% Deduce the identity of the secret actor A
+find_identity(A) :- 
+    my_agent(N),
+    findall(Actor, actor(Actor), As),
+    initialize_visited(N),
+    eliminate(As, A, N).
+
+% Find the nearest oracle using BFS, excluding visited oracles
+solve_task_multiple(Obj,Cost,Agent) :-
+    my_agent(Agent),
+    get_agent_position(Agent, Pos),
+    get_agent_energy(Agent, Energy),
+    find_multiple_oracles(find(Obj), Pos, Energy, Path, Agent),
+    length(Path, Cost).
+
+% Check if there is a nearby oracle that has not been visited yet
+achieved(Task, Pos, Agent) :-
+    Task = find(Obj),
+    map_adjacent(Pos, OraclePos, Obj),
+    visited(Agent, VisitedList),
+    \+ member(Obj, VisitedList).
+
+% BFS search for the nearest charging station
+nearest_charging_station(Task,P, Path,Agent) :-
+    search_bfs(Task, [[P]], [], Path,Agent).
+
+% Determine the energy threshold based on the grid size
+determine_energy_threshold(N, Threshold) :-
+    (   N >= 15, N =< 17 -> Threshold = 25
+    ;   N >= 18, N =< 20 -> Threshold = 35
+    ;   Threshold = 50
+    ).
+
+% Find the oracles
+find_multiple_oracles(Task, StartPos, Energy, Path, Agent) :-
+    ailp_grid_size(N),
+    determine_energy_threshold(N, Threshold), % Determine the energy threshold based on the grid size
+    (   Energy < Threshold ->
+        % If energy is not enough
+        nearest_charging_station(find(c(_)), StartPos, PathToCharger, Agent),
+        agent_do_moves(Agent, PathToCharger),
+        agent_topup_energy(Agent, c(_)),
+        say("topup", Agent),
+        last(PathToCharger, ChargingPos),
+        % After charging, continue to find the oracle
+        continue_task_from_position(Task, ChargingPos, PathFromCharger, Agent),
+        append(PathToCharger, PathFromCharger, Path)
+    ;   
+        % If energy is enough
+        search_bfs(Task, [[StartPos]], [], Path, Agent),
+        agent_do_moves(Agent, Path)
+    ).
+
+% Continue the task from a given position
+continue_task_from_position(Task, Pos, Path, Agent) :-
+    (   Task = find(o(_)) ->
+        search_bfs(Task, [[Pos]], [], Path, Agent),
+        agent_do_moves(Agent, Path)
+    ;   Path = []
+    ).
+
+search_bfs(Task, Queue, Visited, Path, Agent) :-
+    search_bfs_check(Task, Queue, Visited, Path, Agent, true).
+
+% BFS to search for the task whsile excluding visited oracles
+search_bfs_check(Task, Queue, Visited, Path, Agent, IsInitialPos) :-
+    Queue = [Next|Rest],
+    Next = [Pos|RPath],
+    % check_visited_length_and_oracles(Visited, ContinueSearch),
+    (   IsInitialPos
+    ->  edge_cases(Pos, Result), % Check the surroundings of the current position
+        NewIsInitialPos = false
+    ;   Result = continue,
+        NewIsInitialPos = IsInitialPos
+    ),
+    (   Result = unknown -> writeln('unknown'), true
+    ;   achieved(Task, Pos, Agent) -> reverse([Pos|RPath], [_|Path])
+    ;   Result = continue,
+        findall([NPos, Pos|RPath],
+                (map_adjacent(Pos, NPos, empty),
+                 \+ member(NPos, Visited),
+                 \+ member([NPos|_], Rest)), 
+                Newfound),
+        append(Rest, Newfound, NewQueue),
+        search_bfs(Task, NewQueue, [Pos|Visited], Path, Agent)
+    ).
+
+% Check if the visited list length and the number of oracles visited are sufficient
+check_visited_length_and_oracles(Visited, ContinueSearch) :-
+    length(Visited, Length),
+    count_oracles_visited(Visited, OracleCount),
+    (   Length >= 10, OracleCount >= 10
+    ->  ContinueSearch = true
+    ;   ContinueSearch = false
+    ).
+
+% Count the number of oracles visited
+count_oracles_visited(Visited, Count) :-
+    include(is_oracle, Visited, Oracles),
+    length(Oracles, Count).
+
+% check if a visited position is an oracle
+is_oracle(o(_)).
+
+% The edge cases
+edge_cases(Pos, Result) :-
+    findall(Obj, (map_adjacent(Pos, _, Obj), Obj \= empty, Obj \= a(_)), Objects),
+    length(Objects, Number),
+    analyze_objects(Objects, Result).
+
+% Analyze the surrounding objects to determine the result
+analyze_objects(Objects, Result) :-
+    length(Objects, Number),
+    (   Number= 4 -> Result = unknown, writeln('all positions blocked')
+    ;   Result = continue
+    ).
+
+% % Find path to the task, considering energy levels and excluding visited oracles
+% find_multiple_oracles(Task, StartPos, Energy, Path, A, VisitedList) :-
 %     safe_energy_threshold(Threshold),
 %     (   Energy > Threshold ->
-%         % if energy enough, find oracle
-%         search_bf(Task, [[StartPos]], [], Path),
+%         % If energy is enough, find oracle while excluding visited ones
+%         search_bf_exclude_oracles(Task, [[StartPos]], [], Path, VisitedList),
 %         agent_do_moves(A, Path)
-%     ;   % if energy not enough, find charger first
-%         search_for_nearest_charging_station(find(c(_)), StartPos, PathToCharger),
-%         % Path from current position to charger
+%     ;   % If energy is not enough, find charger first
+%         search_for_nearest_charging_station(find(c(_)), StartPos, PathToCharger,VisitedList),
 %         my_agent(A), agent_do_moves(A, PathToCharger),
-%         agent_topup_energy(A, c(_)), % topup agent
-%         say("topup", A), % topup agent
+%         agent_topup_energy(A, c(_)),
+%         say("topup", A),
 %         last(PathToCharger, ChargingPos),
-%         % Path from charger to next oracle
-%         search_bf(Task, [[ChargingPos]], [], PathFromCharger),
+%         % After charging, find oracle while excluding visited ones
+%         search_bf_exclude_oracles(Task, [[ChargingPos]], [], PathFromCharger, VisitedList),
 %         agent_do_moves(A, PathFromCharger),
 %         append(PathToCharger, PathFromCharger, Path)
 %     ).
-
-% % BFS search for the nearest charging station
-% search_for_nearest_charging_station(Task, StartPos, Path) :-
-%     search_bf(Task, [[StartPos]], [], Path).
-
-% % BFS search for unknown position
-% search_bf(Task,Queue,Visited,Path) :-
-%     Queue = [Next|Rest],
-%     Next = [Pos|RPath],
-%     (achieved(Task,Pos) -> reverse([Pos|RPath],[_|Path]) % startPos exclude from the path
-%     ;otherwise     -> findall([NPos,Pos|RPath],
-%                         (map_adjacent(Pos,NPos,empty),
-%                         \+ member(NPos,Visited), 
-%                         \+ member([NPos|_],Rest)), 
-%                          Newfound),
-%                       append(Rest,Newfound,NewQueue),
-%                       search_bf(Task,NewQueue,[Pos|Visited],Path)).
-
-% % True if the Task is achieved with the agent at Pos
-% achieved(Task,Pos) :-  
-%     Task=find(Obj), map_adjacent(Pos,_,Obj).
-
-
-% 依赖的库谓词
-:- dynamic known_actor_link/2.
-
-% 初始化已知演员链接
-init_known_actor_links :-
-    findall((Actor, Link), (actor(Actor), wp(Actor, WT), wt_link(WT, Link)), Pairs),
-    maplist(assertz, Pairs).
-
-% True if link L appears on A's wikipedia page
-actor_has_link(L,A) :-
-    actor(A), wp(A,WT), wt_link(WT,L).
-
-% Eliminate unlikely actors based on the link provided by oracle
-eliminate(As,A,K) :-
-    As=[A], !
-    ;
-    my_agent(Agent),
-    agent_ask_oracle(Agent, o(K), link, L),
-    include(actor_has_link(L), As, ViableAs),
-    K1 is K+1,
-    eliminate(ViableAs, A, K1).
-
-% 计算两个位置之间的距离
-distance(Pos1, Pos2, Distance) :-
-    Pos1 = p(X1, Y1),
-    Pos2 = p(X2, Y2),
-    Distance is abs(X1 - X2) + abs(Y1 - Y2).
-
-% 选择下一个目标神谕
-choose_next_oracle(MyPos, Oracles, ChosenOracle, Path) :-
-    findall(Dist-Oracle, (member(Oracle, Oracles), map_distance(MyPos, Oracle, Dist)), DistOracles),
-    sort(DistOracles, SortedDistOracles),
-    member(_-ChosenOracle, SortedDistOracles),
-    solve_task(find(ChosenOracle), Path).
-
-% 主要路径规划逻辑
-plan_route(A, Oracles, Path) :-
-    get_agent_position(A, MyPos),
-    choose_next_oracle(MyPos, Oracles, NextOracle, PathToOracle),
-    agent_check_oracle(A, NextOracle),
-    plan_route(A, Oracles, RemainingPath),
-    append(PathToOracle, RemainingPath, Path).
-
-% Deduce the identity of the secret actor A
-find_identity(A) :-
-    init_known_actor_links,
-    findall(Oracle, (map_adjacent(_, _, o(Oracle)), !), Oracles),
-    my_agent(Agent),
-    plan_route(Agent, Oracles, Path),
-    follow_path_and_query_oracles(Agent, Path),
-    findall(A, actor(A), As),
-    eliminate(As, A, 1).
-
-% 沿着路径移动并查询神谕
-follow_path_and_query_oracles(_, []).
-follow_path_and_query_oracles(A, [NextPos|Path]) :-
-    move_agent_to(A, NextPos),
-    (adjacent_to_oracle(NextPos, Oracle) ->
-        query_oracle(A, Oracle);
-        true),
-    follow_path_and_query_oracles(A, Path).
-
-% 移动代理到指定位置
-move_agent_to(A, Pos) :-
-    get_agent_energy(A, Energy),
-    map_distance(Pos, NextPos, Distance),
-    Energy >= Distance,
-    agent_do_moves(A, [NextPos]).
-
-% 与相邻的神谕交互
-query_oracle(A, Oracle) :-
-    agent_ask_oracle(A, Oracle, link, Link),
-    update_known_actor_links(Link).
-
-% 更新已知演员链接
-update_known_actor_links(Link) :-
-    known_actor_link(Actor, Link),
-    retractall(known_actor_link(Actor, _)),
-    assertz(known_actor_link(Actor, Link)).
